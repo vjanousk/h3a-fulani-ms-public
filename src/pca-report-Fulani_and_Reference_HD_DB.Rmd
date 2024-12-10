@@ -1,0 +1,965 @@
+---
+title: "Principal Component Analysis Report: Fulani_and_Reference_HD_DB"
+date: "`r Sys.Date()`"
+output: html_document
+always_allow_html: true
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+## PCA Fulani including reference populations
+
+We have run SMARTPCA on all Fulani samples and selected reference
+populations covering genetic variability within Sahel region as well as
+north Africa, Europe and Middle East. The PLINK database used is
+`Fulani_and_Reference_HD_DB`.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_knit$set(root.dir = "~/h3a-fulani/")
+
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+library(umap)
+library(cluster)
+library(ggrepel)
+library(ggbeeswarm)
+library(wesanderson)
+library(RColorBrewer)
+library(patchwork)
+
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+```
+
+### Distribution of Fulani and reference populations on the map and distribution within regions
+
+```{r color_scales}
+
+c_pal <- c("#FDBB84","#FDBB84","#FDBB84",
+"#FC8D59","#FC8D59","#FC8D59",
+"#EF6548","#EF6548","#EF6548",
+"#D7301F","#D7301F","#D7301F",
+"#B30000","#B30000","#B30000",
+"#7F0000","#7F0000","#7F0000")
+
+col_palette1 <- c(
+  rep(brewer.pal(n = 9, name = 'OrRd')[c(4:9)],4)[c(1:18)],
+  rep(brewer.pal(n = 9, name = 'YlGn')[c(4:9)],4)[c(1:19)],
+  rep(brewer.pal(n = 11, name = 'BrBG')[c(1:4)],4)[c(1:14)],
+  rep(brewer.pal(n = 9, name = 'Greys')[c(4:9)],4)[c(1:15)])
+
+col_palette2 <- wes_palette("Cavalcanti1", 66, type = "continuous")
+
+col_palette3 <- c(wes_palette("GrandBudapest1", 18, type = "continuous"),
+                 wes_palette("Cavalcanti1", 19, type = "continuous"),
+                 wes_palette("Royal1", 14, type = "continuous"),
+                 wes_palette("Darjeeling2", 15, type = "continuous"))
+```
+
+```{r fulani_map}
+
+#populations$population_label <- reorder(populations$population_label, populations$fulani)
+
+populations$population_label <- factor(populations$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+col_palette <- col_palette1
+
+plot_map <- ggplot(data = world) +
+    geom_sf(color = "black", fill="white") +
+    xlab("Longitude") + ylab("Latitude") +
+    theme_bw() +
+    coord_sf(xlim = c(-20.0, 50.0), ylim = c(0.0, 55), expand = TRUE) +
+    geom_point(data = populations, 
+               aes(x=longitude, y=latitude, color=population_label, shape=population_label), 
+               size=2.5, stroke = 0.6) +
+    scale_colour_manual(values = col_palette,name="Population") +
+    scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+    theme(legend.text = element_text(size=7),
+        legend.title = element_text(size=10,face="bold"),
+        legend.spacing.x = unit(0.2, 'cm'),
+        legend.spacing.y = unit(0.2, 'cm'),
+        legend.key.height=unit(0.3,"cm"),
+        legend.key.size = unit(0.2,"cm"),
+        plot.title = element_text(hjust = 0, vjust=2)) +
+    guides(color = guide_legend(ncol=2)) +
+    ggtitle("Location of all used Fulani and reference populations")
+
+plot_map
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/map.pdf",width=10,height=10)
+plot_map
+dev.off()
+```
+
+Summary of populations by region.
+
+```{r}
+
+population_names <- unique(pca$population_label)
+
+read_tsv("data/samples/comparative_data_all_populations.tsv") %>%
+  mutate(fulani=case_when(grepl("Fula", population_label) ~ 1,
+                          grepl("Halpularen", population_label, ignore.case = TRUE) ~ 1,
+                          region=="West Africa" ~ 2,
+                          region=="Central Africa" ~ 3,
+                          region=="East Africa" ~ 4,
+                          region %in% c("Central Europe","North Europe","South Europe") ~ 7,
+                          region=="Middle East" ~ 6,
+                          region=="North Africa" ~ 5)) %>%
+  filter(population_label %in% population_names) %>%
+  group_by(fulani) %>%
+  count()
+```
+
+## PCA without downsampling of Fulani set
+
+```{r load data, include=TRUE}
+
+data="data/pca-results/Fulani_and_Reference_HD_DB-170351-160222/Fulani_and_Reference_HD_DB.pca.evec"
+
+read_table(data, 
+           col_names = FALSE, n_max=1)[2:11] %>% unlist(., use.names=FALSE) -> eigen
+
+eigen <- tibble(pc = c(1:10), eigen=eigen)
+
+p <- ggplot(eigen, aes(x=pc, y=eigen)) +
+      geom_line(col="grey") +
+      geom_point(col="dark blue") +
+      theme_bw() +
+      ylab("Eigen Value") +
+      xlab("Principal Component")
+
+p
+```
+
+#### Processing of the PCA data
+
+```{r load_data, include=FALSE}
+
+pc <- as.character(paste0("PC",c(1:10)))
+
+read_table(data, 
+           col_names = FALSE, skip=1) %>%
+  dplyr::select(c(1:11)) %>%
+  dplyr::rename_at(vars(as.character(paste0("X",c(1:11)))),
+            ~c("id",pc)) %>% 
+  tidyr::separate(id, into=c("population_label","sample_id"), sep=":") -> pca
+
+
+## Read populations data
+population_names <- unique(pca$population_label)
+
+#color_palette <- brewer.pal(n = 8, name = "Dark2")
+#color_palette <- wes_palette("Darjeeling1", 5, type = "discrete")
+
+read_tsv("data/samples/comparative_data_all_populations.tsv") %>%
+  filter(population_label %in% population_names) %>%
+  mutate(fulani=case_when(grepl("Fula", population_label) ~ 1,
+                          grepl("Halpularen", population_label, ignore.case = TRUE) ~1,
+                          region=="West Africa" ~ 2,
+                          region=="Central Africa" ~ 3,
+                          region=="East Africa" ~ 4,
+                          region %in% c("Central Europe","North Europe","South Europe") ~ 7,
+                          region=="Middle East" ~ 6,
+                          region=="North Africa" ~ 5)) -> populations
+
+pca %>% 
+  dplyr::group_by(population_label) %>%
+  dplyr::summarize(n=length(sample_id),
+            PC1=mean(PC1),
+            PC2=mean(PC2),
+            PC3=mean(PC3),
+            PC4=mean(PC4),) %>%
+  dplyr::inner_join(populations %>% 
+    dplyr::select(population_label, longitude, latitude, lifestyle2, region, country, fulani), 
+             by=c("population_label" = "population_label")) -> pca_by_pop
+
+pca %>% 
+  dplyr::inner_join(populations %>% 
+    dplyr::select(population_label, longitude, latitude, lifestyle2, region, country, fulani), 
+             by=c("population_label" = "population_label")) -> pca_with_pop
+
+
+```
+
+### PC1 x PC2
+
+Given strong sampling of Fulani populations with respect to the
+reference panel, Fulani-specific genetic variability was captured by
+PC2.
+
+```{r pca_1_2}
+
+#pca_with_pop$population_label <- reorder(pca_with_pop$population_label, pca_with_pop$fulani)
+
+pca_with_pop$population_label <- factor(pca_with_pop$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+plot_pca12 <- ggplot(pca_with_pop, aes(x=PC1, y=PC2, color=population_label, shape=population_label)) +
+  geom_point() +
+  scale_colour_manual(values = col_palette,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+  theme_bw() +
+  theme(legend.position = "none",
+        legend.spacing.x = unit(0.2, 'cm'),
+        legend.spacing.y = unit(0.3, 'cm'),
+        legend.key.size = unit(0.3,"cm"),) +
+  guides(color = guide_legend(ncol=4))
+
+plot_pca12
+```
+
+```{r pca_1_3}
+
+#pca_with_pop$population_label <- reorder(pca_with_pop$population_label, pca_with_pop$fulani)
+
+pca_with_pop$population_label <- factor(pca_with_pop$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+plot_pca13 <- ggplot(pca_with_pop, aes(x=PC1, y=PC3, color=population_label, shape=population_label)) +
+  geom_point() +
+  scale_colour_manual(values = col_palette,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = -0.05, vjust=1),
+        legend.spacing.x = unit(0.2, 'cm'),
+        legend.spacing.y = unit(0.3, 'cm'),
+        legend.key.size = unit(0.3,"cm"),
+        legend.position = "none") +
+  guides(color = guide_legend(ncol=4))
+        
+plot_pca13
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/suppl-figure-4.pdf",
+    width=10,height=7)
+plot_pca12 + plot_pca13 + plot_layout(guides = 'collect') & theme(legend.position = 'bottom')
+dev.off()
+```
+
+## PCA for downsampled Fulani with projection
+
+In order to remove the strong influence of Fulani sampling with respect
+to the reference populations, we carried out downsampling to \~60 Fulani
+samples and have run the PCA with projection for the remaining Fulani
+samples.
+
+```{r load_data_downsampled, include=TRUE}
+
+data_downsampled="data/pca-results/Fulani_Downsample_Projection_HD_DB-165300-190423/Fulani_Downsample_Projection_HD_DB.pca.evec"
+
+read_table(data_downsampled, col_names = FALSE, n_max=1)[2:11] %>% 
+  unlist(., use.names=FALSE) -> eigen_downsampled
+
+eigen_downsampled <- tibble(pc = c(1:10), eigen=eigen_downsampled)
+
+p <- ggplot(eigen_downsampled, aes(x=pc, y=eigen)) +
+      geom_line(col="grey") +
+      geom_point(col="dark blue") +
+      theme_bw() +
+      ylab("Eigen Value") +
+      xlab("Principal Component")
+
+p
+```
+
+### Load the data
+
+```{r load_data_downsampled, include=FALSE}
+
+pc <- as.character(paste0("PC",c(1:10)))
+
+read_table(data_downsampled, 
+           col_names = FALSE, skip=1) %>%
+  dplyr::select(c(1:11)) %>%
+  dplyr::rename_at(vars(as.character(paste0("X",c(1:11)))),
+            ~c("id",pc)) %>% 
+  tidyr::separate(id, into=c("population_label","sample_id"), sep=":") %>%
+  mutate(population_label=str_remove(population_label,"_p")) -> pca_downsampled
+
+
+## Read populations data
+population_names <- unique(pca_downsampled$population_label)
+
+read_tsv("data/samples/comparative_data_all_populations.tsv") %>%
+  filter(population_label %in% population_names) %>%
+  mutate(fulani=case_when(grepl("Fula", population_label) ~ 1,
+                          grepl("Halpularen", population_label, ignore.case = TRUE) ~1,
+                          region=="West Africa" ~ 2,
+                          region=="Central Africa" ~ 3,
+                          region=="East Africa" ~ 4,
+                          region %in% c("Central Europe","North Europe","South Europe") ~ 7,
+                          region=="Middle East" ~ 6,
+                          region=="North Africa" ~ 5)) -> populations
+
+pca_downsampled %>% 
+  dplyr::group_by(population_label) %>%
+  dplyr::summarize(n=length(sample_id),
+            PC1=mean(PC1),
+            PC2=mean(PC2),
+            PC3=mean(PC3),
+            PC4=mean(PC4),) %>%
+  dplyr::inner_join(populations %>% 
+               dplyr::select(population_label, longitude, latitude, lifestyle2, region, country,fulani), 
+             by=c("population_label" = "population_label")) -> pca_by_pop_downsampled
+
+pca_downsampled %>% 
+  dplyr::inner_join(populations %>% 
+               dplyr::select(population_label, longitude, latitude, lifestyle2, region, country,fulani), 
+             by=c("population_label" = "population_label")) -> pca_with_pop_downsampled
+
+```
+
+### PC1 x PC2
+
+```{r pca_1_2_downsampled}
+
+#pca_with_pop_downsampled$population_label <- reorder(pca_with_pop_downsampled$population_label, pca_with_pop_downsampled$fulani)
+
+pca_with_pop_downsampled$population_label <- factor(pca_with_pop_downsampled$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+plot_pca12_down <- ggplot(pca_with_pop_downsampled, aes(x=PC1, y=PC2, color=population_label, shape=population_label)) +
+  geom_point() +
+  scale_colour_manual(values = col_palette,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+  theme_bw() +
+  theme(legend.title = element_text(size=10,face="bold"),
+        legend.spacing.x = unit(0.2, 'cm'),
+        legend.spacing.y = unit(0.3, 'cm'),
+        legend.key.size = unit(0.3,"cm")) +
+  guides(color = guide_legend(ncol=2))
+
+plot_pca12_down
+```
+
+```{r pca_1_2_downsampled_supplement}
+
+#pca_with_pop_downsampled$population_label <- reorder(pca_with_pop_downsampled$population_label, pca_with_pop_downsampled$fulani)
+
+pca_with_pop_downsampled$population_label <- factor(pca_with_pop_downsampled$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+plot_pca12_down <- ggplot(pca_with_pop_downsampled, aes(x=PC1, y=PC2, color=population_label, shape=population_label)) +
+  geom_point(size=1.5) +
+  scale_colour_manual(values = col_palette,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+  theme_bw() +
+  ggtitle("PC1 vs PC2") +
+  theme(legend.spacing.x = unit(0.2, 'cm'),
+        legend.spacing.y = unit(0.3, 'cm'),
+        legend.key.size = unit(0.2,"cm"),
+        legend.text = element_text(size=8),
+        legend.title = element_text(size=10,face="bold")) +
+  guides(color = guide_legend(ncol=3))
+
+plot_pca12_down
+```
+
+### PC1 x PC3
+
+```{r pca_1_3_downsampled}
+
+#pca_with_pop_downsampled$population_label <- reorder(pca_with_pop_downsampled$population_label, pca_with_pop_downsampled$fulani)
+
+pca_with_pop_downsampled$population_label <- factor(pca_with_pop_downsampled$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+plot_pca13_down <- ggplot(pca_with_pop_downsampled, aes(x=PC1, y=PC3, color=population_label, shape=population_label)) +
+  geom_point(size=1) +
+  scale_colour_manual(values = col_palette,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+  theme_bw() +
+  ggtitle("PC1 vs PC3") +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = -0.05, vjust=1))
+
+plot_pca13_down
+```
+
+### PC1 x PC4
+
+```{r pca_1_4_downsampled}
+
+#pca_with_pop_downsampled$population_label <- reorder(pca_with_pop_downsampled$population_label, pca_with_pop_downsampled$fulani)
+
+pca_with_pop_downsampled$population_label <- factor(pca_with_pop_downsampled$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+plot_pca14_down <- ggplot(pca_with_pop_downsampled, aes(x=PC1, y=PC4, color=population_label, shape=population_label)) +
+  geom_point(size=1) +
+  scale_colour_manual(values = col_palette,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+  theme_bw() +
+  ggtitle("PC1 vs PC4") +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = -0.05, vjust=1))
+
+plot_pca14_down
+```
+
+```{r pca_1_5_downsampled}
+
+#pca_with_pop_downsampled$population_label <- reorder(pca_with_pop_downsampled$population_label, pca_with_pop_downsampled$fulani)
+
+pca_with_pop_downsampled$population_label <- factor(pca_with_pop_downsampled$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+plot_pca15_down <- ggplot(pca_with_pop_downsampled, aes(x=PC1, y=PC5, color=population_label, shape=population_label)) +
+  geom_point(size=1) +
+  scale_colour_manual(values = col_palette,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+  theme_bw() +
+  ggtitle("PC1 vs PC5") +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = -0.05, vjust=1))
+
+plot_pca15_down
+```
+
+### PC1 x PC6
+
+```{r pca_1_6_downsampled}
+
+#pca_with_pop_downsampled$population_label <- reorder(pca_with_pop_downsampled$population_label, pca_with_pop_downsampled$fulani)
+
+pca_with_pop_downsampled$population_label <- factor(pca_with_pop_downsampled$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+plot_pca16_down <- ggplot(pca_with_pop_downsampled, aes(x=PC1, y=PC6, color=population_label, shape=population_label)) +
+  geom_point(size=1) +
+  scale_colour_manual(values = col_palette,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+  theme_bw() +
+  ggtitle("PC1 vs PC6") +
+  theme(legend.position = "none") +
+  guides(color = guide_legend(ncol=2))
+
+plot_pca16_down
+```
+
+### PC1 x PC7
+
+```{r pca_1_7_downsampled}
+
+#pca_with_pop_downsampled$population_label <- reorder(pca_with_pop_downsampled$population_label, pca_with_pop_downsampled$fulani)
+
+pca_with_pop_downsampled$population_label <- factor(pca_with_pop_downsampled$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+plot_pca17_down <- ggplot(pca_with_pop_downsampled, aes(x=PC1, y=PC7, color=population_label, shape=population_label)) +
+  geom_point() +
+  scale_colour_manual(values = col_palette,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+  ggtitle("PC1 vs PC7") +
+  theme_bw() +
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = -0.05, vjust=1))
+
+plot_pca17_down
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/pca_all_components.pdf",
+    width=8,height=10)
+grid.arrange(plot_pca12_down, 
+             plot_pca13_down, 
+             plot_pca14_down,
+             plot_pca15_down,
+             plot_pca16_down, ncol = 2, layout_matrix = rbind(c(1,1), c(2,3), c(4,5)))
+dev.off()
+```
+
+### UMAP for down-sampled & projected dataset
+
+##### UMAP 1 - all samples
+
+```{r umap}
+
+umap.config = umap.defaults
+
+umap.config$n_neighbors=20
+umap.config$min_dist=0.8
+umap.config$spread=1
+umap.config$n_epochs=200
+
+pca.umap = umap(pca_with_pop_downsampled[3:12],config=umap.config, preserve.seed=TRUE)
+
+tibble(sample_id=pca_with_pop_downsampled$sample_id, 
+       population_label=pca_with_pop_downsampled$population_label, 
+       region=pca_with_pop_downsampled$region,
+       country=pca_with_pop_downsampled$country,
+       fulani=pca_with_pop_downsampled$fulani,
+       lifestyle=pca_with_pop_downsampled$lifestyle2,
+       longitude=pca_with_pop_downsampled$longitude,
+       latitude=pca_with_pop_downsampled$latitude,
+       x=pca.umap$layout[,1], 
+       y=pca.umap$layout[,2]) -> pca.umap.tibble.all
+```
+
+```{r}
+
+pca.umap.tibble.all %>% write_tsv("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/pca_umap_all_20_08_1_16082023.tsv",col_names = TRUE)
+```
+
+```{r}
+
+pca.umap.tibble.all <- read_tsv("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/pca_umap_all_20_08_1_16082023.tsv",col_names = TRUE)
+```
+
+```{r}
+
+pca.umap.tibble.all$population_label <- factor(pca.umap.tibble.all$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+n_neighbors=20
+min_dist=0.8
+spread=1
+
+plot_umap3 <- ggplot(pca.umap.tibble.all, aes(x=x, y=y, color=population_label,shape=population_label)) +
+  geom_point(alpha=0.8,size=1) +
+  scale_colour_manual(values = col_palette,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+  theme_bw() +
+  xlab("UMAP1") +
+  ylab("UMAP2") +
+  ggtitle(paste0("UMAP: n_neighbors=",n_neighbors,"; min_dist=",min_dist,"; spread=",spread)) +
+  theme(legend.position="none")
+
+plot_umap3
+```
+
+##### UMAP 2 - all samples
+
+```{r umap}
+
+umap.config = umap.defaults
+
+umap.config$n_neighbors=10
+umap.config$min_dist=0.9
+umap.config$spread=1
+umap.config$n_epochs=200
+
+pca.umap = umap(pca_with_pop_downsampled[3:12],config=umap.config, preserve.seed=TRUE)
+
+tibble(sample_id=pca_with_pop_downsampled$sample_id, 
+       population_label=pca_with_pop_downsampled$population_label, 
+       region=pca_with_pop_downsampled$region,
+       country=pca_with_pop_downsampled$country,
+       fulani=pca_with_pop_downsampled$fulani,
+       lifestyle=pca_with_pop_downsampled$lifestyle2,
+       longitude=pca_with_pop_downsampled$longitude,
+       latitude=pca_with_pop_downsampled$latitude,
+       x=pca.umap$layout[,1], 
+       y=pca.umap$layout[,2]) -> pca.umap.tibble.all
+```
+
+```{r}
+
+pca.umap.tibble.all %>% write_tsv("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/pca_umap_all_10_09_1_16082023.tsv",col_names = TRUE)
+```
+
+```{r}
+
+pca.umap.tibble.all <- read_tsv("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/pca_umap_all_10_09_1_16082023.tsv",col_names = TRUE)
+```
+
+```{r}
+
+pca.umap.tibble.all$population_label <- factor(pca.umap.tibble.all$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+n_neighbors=10
+min_dist=0.9
+spread=1
+
+plot_umap2 <- ggplot(pca.umap.tibble.all, aes(x=x, y=y, color=population_label,shape=population_label)) +
+  geom_point(alpha=0.8,size=1) +
+  scale_colour_manual(values = col_palette,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+  theme_bw() +
+  xlab("UMAP1") +
+  ylab("UMAP2") +
+  ggtitle(paste0("UMAP: n_neighbors=",n_neighbors,"; min_dist=",min_dist,"; spread=",spread)) +
+  theme(legend.position="none")
+
+plot_umap2
+```
+
+##### UMAP3 - all samples
+
+```{r umap}
+
+umap.config = umap.defaults
+
+umap.config$n_neighbors=10
+umap.config$min_dist=0.8
+umap.config$spread=1
+umap.config$n_epochs=200
+
+pca.umap = umap(pca_with_pop_downsampled[3:12],config=umap.config, preserve.seed=TRUE)
+
+tibble(sample_id=pca_with_pop_downsampled$sample_id, 
+       population_label=pca_with_pop_downsampled$population_label, 
+       region=pca_with_pop_downsampled$region,
+       country=pca_with_pop_downsampled$country,
+       fulani=pca_with_pop_downsampled$fulani,
+       lifestyle=pca_with_pop_downsampled$lifestyle2,
+       longitude=pca_with_pop_downsampled$longitude,
+       latitude=pca_with_pop_downsampled$latitude,
+       x=pca.umap$layout[,1], 
+       y=pca.umap$layout[,2]) -> pca.umap.tibble.all
+```
+
+```{r}
+
+pca.umap.tibble.all %>% write_tsv("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/pca_umap_all_10_08_1_16082023.tsv",col_names = TRUE)
+```
+
+```{r}
+
+pca.umap.tibble.all <- read_tsv("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/pca_umap_all_10_08_1_16082023.tsv",col_names = TRUE)
+```
+
+```{r}
+
+pca.umap.tibble.all$population_label <- factor(pca.umap.tibble.all$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+n_neighbors=10
+min_dist=0.9
+spread=1
+
+plot_umap1 <- ggplot(pca.umap.tibble.all, aes(x=x, y=y, color=population_label,shape=population_label)) +
+  geom_point(alpha=0.8,size=1) +
+  scale_colour_manual(values = col_palette,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],4)[c(1:66)],name="Population") +
+  theme_bw() +
+  xlab("UMAP1") +
+  ylab("UMAP2") +
+  ggtitle(paste0("UMAP: n_neighbors=",n_neighbors,"; min_dist=",min_dist,"; spread=",spread)) +
+  theme(legend.title=element_text(size=8,face="bold"),
+        legend.text=element_text(size=8),
+        legend.spacing.x = unit(0.2, 'cm'),
+        legend.spacing.y = unit(0.5, 'cm'),
+        legend.key.size = unit(0.3,"cm")) +
+  guides(color = guide_legend(ncol=2))
+
+plot_umap1
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/umap-all-composite.pdf",width=10,height=10)
+grid.arrange(plot_umap1, plot_umap2, plot_umap3, ncol = 2, 
+             layout_matrix = rbind(c(1,1), c(2,3)))
+dev.off()
+```
+
+#### Iterations over different UMAP parameters
+
+```{r}
+
+plot_umap <- function(data, n_neighbors=10, min_dist=1, spread=2){
+  
+  umap.config = umap.defaults
+  
+  umap.config$n_neighbors=n_neighbors
+  umap.config$min_dist=min_dist
+  umap.config$spread=spread
+  
+  pca.umap = umap(data[3:12],config=umap.config)
+  
+  tibble(sample_id=data$sample_id, 
+         population_label=data$population_label, 
+         longitude=data$longitude,
+         latitude=data$latitude,
+         region=data$region,
+         country=data$country,
+         x=pca.umap$layout[,1], 
+         y=pca.umap$layout[,2]) -> pca.umap.tibble
+  
+  pca.umap.tibble %>%
+    mutate(fulani=case_when(grepl("Fula", population_label) ~ "Fulani",
+                            grepl("Halpularen", population_label, ignore.case = TRUE) ~"Fulani",
+                            TRUE ~ region)) -> pca.umap.tibble
+  
+  pca.umap.tibble$fulani <- factor(pca.umap.tibble$fulani, 
+                                   levels=c("Fulani","West Africa","Central Africa","East Africa","North Africa","Middle East","South Europe","Central Europe","North Europe"))
+  
+  p <- ggplot(pca.umap.tibble, aes(x=x, y=y, color=fulani)) +
+    geom_point(alpha=0.6,size=1) +
+    ggtitle(paste0("UMAP: n_neighbors=",n_neighbors,"; min_dist=",min_dist,"; spread=",spread)) +
+    theme_bw() +
+    theme(axis.title = element_text(size = 12,face="bold"),
+          axis.text.y = element_text(size = 8),
+          axis.text.x = element_text(size=8),
+          legend.title=element_text(size=8,face="bold"),
+          legend.text=element_text(size=8))
+  
+  plot(p)
+  # jpeg(paste0("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/umap-",n_neighbors,"-",min_dist,"-",spread,"-Fulani_and_Reference_HD_DB.jpg"),
+  #      units="in",width = 8, height = 6, res = 300, quality=100)
+  # plot(p)
+  # dev.off()
+}
+
+plot_umap(pca_with_pop_downsampled, n_neighbors=5, min_dist=1, spread=2)
+plot_umap(pca_with_pop_downsampled, n_neighbors=10, min_dist=1, spread=2)
+plot_umap(pca_with_pop_downsampled, n_neighbors=20, min_dist=1, spread=2)
+plot_umap(pca_with_pop_downsampled, n_neighbors=40, min_dist=1, spread=2)
+
+plot_umap(pca_with_pop_downsampled, n_neighbors=5, min_dist=1, spread=3)
+plot_umap(pca_with_pop_downsampled, n_neighbors=10, min_dist=1, spread=3)
+plot_umap(pca_with_pop_downsampled, n_neighbors=20, min_dist=1, spread=3)
+plot_umap(pca_with_pop_downsampled, n_neighbors=40, min_dist=1, spread=3)
+
+plot_umap(pca_with_pop_downsampled, n_neighbors=5, min_dist=2, spread=3)
+plot_umap(pca_with_pop_downsampled, n_neighbors=10, min_dist=2, spread=3)
+plot_umap(pca_with_pop_downsampled, n_neighbors=20, min_dist=2, spread=3)
+plot_umap(pca_with_pop_downsampled, n_neighbors=40, min_dist=2, spread=3)
+
+plot_umap(pca_with_pop_downsampled, n_neighbors=10, min_dist=0.1, spread=1)
+plot_umap(pca_with_pop_downsampled, n_neighbors=10, min_dist=0.2, spread=1)
+plot_umap(pca_with_pop_downsampled, n_neighbors=10, min_dist=0.5, spread=1)
+plot_umap(pca_with_pop_downsampled, n_neighbors=10, min_dist=0.7, spread=1)
+plot_umap(pca_with_pop_downsampled, n_neighbors=10, min_dist=0.9, spread=1)
+plot_umap(pca_with_pop_downsampled, n_neighbors=10, min_dist=0.99, spread=1)
+```
+
+```{r}
+
+plot_umap <- function(data, n_neighbors=10, min_dist=1, spread=2){
+  
+  umap.config = umap.defaults
+  
+  umap.config$n_neighbors=n_neighbors
+  umap.config$min_dist=min_dist
+  umap.config$spread=spread
+  
+  pca.umap = umap(data[3:12],config=umap.config)
+  
+  tibble(sample_id=data$sample_id, 
+         population_label=data$population_label, 
+         longitude=data$longitude,
+         latitude=data$latitude,
+         region=data$region,
+         country=data$country,
+         x=pca.umap$layout[,1], 
+         y=pca.umap$layout[,2]) -> pca.umap.tibble
+  
+  pca.umap.tibble %>%
+    mutate(fulani=case_when(grepl("Fula", population_label) ~ "Fulani",
+                            grepl("Halpularen", population_label, ignore.case = TRUE) ~"Fulani",
+                            TRUE ~ region)) -> pca.umap.tibble
+  
+  p <- ggplot(pca.umap.tibble, aes(x=x, y=y, color=fulani)) +
+    geom_point(alpha=0.6,size=1) +
+    ggtitle(paste0("UMAP: n_neighbors=",n_neighbors,"; min_dist=",min_dist,"; spread=",spread)) +
+    theme_bw() +
+    theme(axis.title = element_text(size = 12,face="bold"),
+          axis.text.y = element_text(size = 8),
+          axis.text.x = element_text(size=8),
+          legend.title=element_text(size=8,face="bold"),
+          legend.text=element_text(size=8))
+  
+  plot(p)
+  # jpeg(paste0("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/umap-",n_neighbors,"-",min_dist,"-",spread,"-Fulani_and_Reference_HD_DB.jpg"),
+  #      units="in",width = 8, height = 6, res = 300, quality=100)
+  # plot(p)
+  # dev.off()
+}
+
+pca_with_pop %>% filter(region=="West Africa" | region == "Central Africa" | region == "North Africa" | region=="East Africa") -> pca_with_pop_downsampled_subset
+
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=5, min_dist=1, spread=2)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=10, min_dist=1, spread=2)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=20, min_dist=1, spread=2)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=40, min_dist=1, spread=2)
+
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=5, min_dist=1, spread=3)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=10, min_dist=1, spread=3)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=20, min_dist=1, spread=3)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=40, min_dist=1, spread=3)
+
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=5, min_dist=2, spread=3)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=10, min_dist=2, spread=3)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=20, min_dist=2, spread=3)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=40, min_dist=2, spread=3)
+
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=10, min_dist=0.1, spread=1)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=10, min_dist=0.2, spread=1)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=10, min_dist=0.5, spread=1)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=10, min_dist=0.7, spread=1)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=10, min_dist=0.9, spread=1)
+plot_umap(pca_with_pop_downsampled_subset, n_neighbors=10, min_dist=0.99, spread=1)
+```
+
+```{r}
+
+n_neighbors=10
+min_dist=0.7
+spread=1
+
+umap.config = umap.defaults
+  
+umap.config$n_neighbors=n_neighbors
+umap.config$min_dist=min_dist
+umap.config$spread=spread
+umap.config$n_epochs=1000
+
+pca.umap = umap(pca_with_pop_downsampled_subset[3:12],
+                method="naive",
+                config=umap.config)
+
+tibble(sample_id=pca_with_pop_downsampled_subset$sample_id, 
+       population_label=pca_with_pop_downsampled_subset$population_label, 
+       longitude=pca_with_pop_downsampled_subset$longitude,
+       latitude=pca_with_pop_downsampled_subset$latitude,
+       region=pca_with_pop_downsampled_subset$region,
+       country=pca_with_pop_downsampled_subset$country,
+       lifestyle=pca_with_pop_downsampled_subset$lifestyle2,
+       x=pca.umap$layout[,1], 
+       y=pca.umap$layout[,2]) -> pca.umap.tibble
+```
+
+```{r}
+
+pca.umap.tibble %>%
+  mutate(fulani=case_when(grepl("Fula", population_label) ~ "Fulani",
+                          grepl("Halpularen", population_label, ignore.case = TRUE) ~"Fulani",
+                          TRUE ~ region)) -> pca.umap.tibble
+
+p <- ggplot(pca.umap.tibble, aes(x=x, y=y, color=fulani,shape=lifestyle)) +
+  geom_point(alpha=0.6,size=1) +
+  ggtitle(paste0("UMAP: n_neighbors=",n_neighbors,"; min_dist=",min_dist,"; spread=",spread)) +
+  theme_bw()
+
+p
+```
+
+### UMAP on West and Central African Populations
+
+```{r}
+
+pca_with_pop %>% filter( ( region=="West Africa" | region == "Central Africa" ) & population_label != "Sudan_Nubian" ) -> pca_with_pop_downsampled_subset
+
+
+pca_with_pop_downsampled_subset$population_label <- reorder(pca_with_pop_downsampled_subset$population_label, pca_with_pop_downsampled_subset$fulani)
+
+#pca_with_pop %>% filter( ( region=="West Africa" | region == "Central Africa" ) ) -> pca_with_pop_downsampled_subset
+
+n_neighbors=15
+min_dist=0.9
+spread=1
+n_epochs=1000
+
+umap.config = umap.defaults
+  
+umap.config$n_neighbors=n_neighbors
+umap.config$min_dist=min_dist
+umap.config$spread=spread
+umap.config$n_epochs=n_epochs
+
+pca.umap = umap(pca_with_pop_downsampled_subset[3:12],
+                method="naive",
+                config=umap.config)
+
+tibble(sample_id=pca_with_pop_downsampled_subset$sample_id, 
+       population_label=pca_with_pop_downsampled_subset$population_label, 
+       longitude=pca_with_pop_downsampled_subset$longitude,
+       latitude=pca_with_pop_downsampled_subset$latitude,
+       region=pca_with_pop_downsampled_subset$region,
+       fulani=pca_with_pop_downsampled_subset$fulani,
+       country=pca_with_pop_downsampled_subset$country,
+       lifestyle=pca_with_pop_downsampled_subset$lifestyle2,
+       x=pca.umap$layout[,1], 
+       y=pca.umap$layout[,2]) -> pca.umap.tibble
+```
+
+```{r}
+
+## Saved result of the UMAP to be able to reproduce graphs
+pca.umap.tibble %>% write_tsv("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/pca_umap_subset_16082023.tsv",col_names = TRUE)
+```
+
+```{r}
+
+## Saved result of the UMAP to be able to reproduce graphs
+pca.umap.tibble <- read_tsv("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/pca_umap_subset_16082023.tsv",col_names = TRUE)
+```
+
+```{r}
+
+#pca.umap.tibble$population_label <- factor(pca.umap.tibble$population_label, levels=populations$population_label[with(populations, order(fulani, longitude))])
+
+pca.umap.tibble %>%
+  mutate(fulani=case_when(grepl("Fula", population_label) ~ "Fulani",
+                          grepl("Halpularen", population_label, ignore.case = TRUE) ~"Fulani",
+                          TRUE ~ region)) -> pca.umap.tibble
+
+# cp = c(wes_palette("Cavalcanti1", 3, type = "discrete")[3],
+#        wes_palette("Cavalcanti1", 3, type = "discrete")[1],
+#        wes_palette("Cavalcanti1", 3, type = "discrete")[2])
+
+plot_umap_subsistence <- ggplot(pca.umap.tibble, aes(x=x, y=y, color=fulani,shape=lifestyle)) +
+  geom_point(size=1.5) +
+  scale_color_manual(values=col_palette1[c(47,16,28)],name="Region") +
+  scale_shape_manual(values=c(1,16),name="Subsistence") +
+  xlab("UMAP1") +
+  ylab("UMAP2") +
+  ggtitle("") +
+  theme_bw() +
+  theme(legend.position = c(0.85, 0.75),
+        legend.background = element_rect(fill=NA, linewidth = 0),
+        legend.box.background = element_rect(fill="white",colour ="black",linewidth = 0.2),
+        legend.spacing.y = unit(0,"cm"),
+        legend.title=element_text(size=8,face="bold"),
+        legend.text=element_text(size=8),
+        legend.spacing.x = unit(0.1, 'cm'),
+        legend.key.size = unit(0.4,"cm"))
+
+plot_umap_subsistence
+```
+
+```{r}
+
+n_neighbors=15
+min_dist=0.9
+spread=1
+
+populations %>%
+  filter(fulani <= 3) -> populations_subset
+
+pca.umap.tibble$population_label <- factor(pca.umap.tibble$population_label, levels=populations_subset$population_label[with(populations_subset, order(fulani, longitude))])
+
+plot_umap_populations <- ggplot(pca.umap.tibble, aes(x=x, y=y, color=population_label,shape=population_label)) +
+  geom_point(size=1.5) +
+  scale_color_manual(values=col_palette[c(1:51)],
+                     name="Population") +
+  scale_shape_manual(values=rep(c(1:18)[-11],3)[c(1:66)],name="Population") +
+  ggtitle(paste0("UMAP: n_neighbors=",n_neighbors,"; min_dist=",min_dist,"; spread=",spread)) +
+  xlab("UMAP1") +
+  ylab("UMAP2") +
+  theme_bw() +
+  theme(legend.position="none",
+        title = element_text(size=8))
+
+plot_umap_populations
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/figure2-composite.pdf",width=10,height=10)
+grid.arrange(plot_pca12_down, plot_umap_populations, plot_umap_subsistence, ncol = 2, 
+             layout_matrix = rbind(c(1,1), c(2,3)))
+dev.off()
+```
+
+```{r}
+
+tiff("src/rmd-reports/pca-report-Fulani_and_Reference_HD_DB/figure2-composite.tiff", units="in", width=10, height=10, res=300)
+grid.arrange(plot_pca12_down, plot_umap_populations, plot_umap_subsistence, ncol = 2, 
+             layout_matrix = rbind(c(1,1), c(2,3)))
+dev.off()
+```

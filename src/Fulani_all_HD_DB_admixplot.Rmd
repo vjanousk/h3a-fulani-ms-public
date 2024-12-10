@@ -1,0 +1,123 @@
+---
+title: "Fulani_all_HD_DB_admixplot"
+author: "MameYoro"
+date: "04/05/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd("~/ResearchRepository/Projects/h3a-fulani/admixture-reports/Fulani_all_HD_DB")
+
+#libraries
+library(tidyverse)
+library(forcats)
+library(ggthemes)
+library(patchwork)
+library(RColorBrewer)
+library(plotly)
+library(ggsci)
+```
+
+```{r}
+### data: Fulani_all_HD_DB
+# create file wich will contains admixture analysis output and pop info
+FAHD_all_data <- tibble(Pop=character(),
+sampleID=character(),
+k=numeric(),
+Q=character(),
+value=numeric())
+
+# import FAHD_samplelist wich contains sampleID and refered pop
+FAHD_samplelist <- read_excel("Fulani_all_HD_DB#2_samplelist.xlsx")
+# View(FAHD_samplelist)
+
+# combine with admixtures output
+for (k in 1:9){
+FAHD_data <- read_delim(paste0("C:/Users/User/Documents/ResearchRepository/Projects/h3a-fulani/admixture-reports/Fulani_all_HD_DB/Fulani_all_HD_DB#2.",k,".Q"),
+col_names = paste0("Q",seq(2:k)),
+delim=" ")
+FAHD_data$Pop <- FAHD_samplelist$Pop
+FAHD_data$sampleID <- FAHD_samplelist$sampleID
+FAHD_data$k <- k
+#This step converts from wide to long.
+FAHD_data %>% gather(Q, value, -Pop, -sampleID,-k) -> FAHD_data
+FAHD_all_data <- rbind(FAHD_all_data,FAHD_data)
+}
+
+# write_xlsx(FAHD_all_data,"FAHD_all_data.xlsx")
+```
+
+
+```{r fig.width = 20, fig.height = 16}
+
+FAHD_all_data$Pop <- factor(FAHD_all_data$Pop, levels = c("Senegal_Fulani_Linguere",
+                                            							"Gambia_Fula",
+                                            							"Senegal_Halpularen",
+                                            							"Mauritania_Fulani_Assaba",
+                                            							"Guinea_Fulani",
+                                            							"Mali_Fulani_InnerDelta",
+                                            							"Mali_Fulani_Diafarabe",
+                                            							"BurkinaFaso_Fulani_Banfora",
+                                            							"BurkinaFaso_Fulani_Ziniare",
+                                            							"BurkinaFaso_Fulani_Tindangou",
+                                            							"Niger_Fulani_Ader",
+                                            							"Niger_Fulani_Abalak",
+                                            							"Niger_Fulani_Zinder",
+                                            							"Niger_Fulani_Diffa",
+                                            							"Niger_Fulani_Balatungur",
+                                            							"Cameroon_Fulani_Tcheboua",
+                                            							"Chad_Fulani_Linia",
+                                            							"Chad_Fulani_Bongor"))
+mydata1 = FAHD_all_data
+
+tibble(mydata1) %>%
+  mutate(Pop = as_factor(Pop),
+         k = as_factor(k),
+         Q = as.character(Q),
+         x = as.character(sampleID)) %>%
+  group_by(Pop, value) %>%
+  # filter(k == 4) %>%
+  ggplot(.,aes(x = sampleID,y=value)) + 
+  geom_bar(aes(fill = Q), stat="identity", position="fill", width = 1.2) +
+  facet_grid(cols = vars(Pop), rows = vars(k), switch = "x", scales = "free_x") + # facet_wrap(~k, ncol = 1) +
+  scale_fill_brewer(palette="Set1",name="Q",labels=seq(1:9)) +
+  # scale_colour_manual(values=FRHD_cols, aesthetics=c("fill", "colour"))+
+  scale_y_continuous(breaks = c(0, 0.5, 1)) + 
+  labs(title = "Fig. 11c",
+       subtitle ="Fulani_all_admixplot_full", 
+       caption ="209550 variants and 460 people pass filters and QC.",
+       x="Populations", y="Ancestry") +
+  theme_minimal () +
+  theme(strip.placement = "outside",
+        legend.position="none",
+        panel.spacing.x = unit(0, "null"),
+        panel.margin.x=unit(0, "null") ,
+        plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 14),
+        plot.caption = element_text(size = 14),
+        axis.title = element_text(size=16, face="bold"),
+        panel.grid = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        strip.text.x =  element_text(size=14, angle = -90,hjust=0),
+        strip.text.y =  element_text(size=14, angle = 0, face="bold")) -> FAHD_admixplot_full
+
+ 
+
+pdf("FAHD_admixplot_full.pdf", width = 20, height = 16)
+FAHD_admixplot_full
+dev.off()
+
+jpeg("admixplot_FAHD.jpg",
+     units="in",width = 26, height = 16, res = 300, quality=100)
+FAHD_admixplot_full
+dev.off()
+
+
+# ggplotly(FAHD_admixplot_full)
+```
+
+
+

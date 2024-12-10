@@ -1,0 +1,294 @@
+---
+title: "Untitled"
+author: "MameYoro"
+date: "04/05/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd("~/ResearchRepository/Projects/h3a-fulani/admixture-reports/Fulani_and_Reference_HD_DB")
+
+#libraries
+library(tidyverse)
+library(forcats)
+library(ggthemes)
+library(patchwork)
+library(RColorBrewer)
+library(plotly)
+library(ggsci)
+library("writexl")
+library(dplyr)
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+### data: Fulani_and_Reference_HD_DB
+# create file wich will contains admixture analysis output and pop info
+FRHD_all_data <- tibble(Pop=character(),
+                        sampleID=character(),
+                        k=numeric(),
+                        Q=character(),
+                        value=numeric())
+
+# import FRHD_samplelist wich contains sampleID and refered pop
+library(readxl)
+FRHD_samplelist <- read_excel("Fulani_and_Reference_HD_DB_selected#5_samplelist.xlsx")
+# View(FRHD_samplelist)
+
+# combine with admixtures output
+for (k in 1:9){
+  FRHD_data <- read_delim(paste0("C:/Users/User/Documents/ResearchRepository/Projects/h3a-fulani/admixture-reports/Fulani_and_Reference_HD_DB/Fulani_and_Reference_HD_DB_selected#5.",k,".Q"), col_names = paste0("Q",seq(2:k)),delim=" ")
+  
+FRHD_data$Pop <- FRHD_samplelist$Pop
+FRHD_data$sampleID <- FRHD_samplelist$sampleID
+FRHD_data$k <- k
+
+#This step converts from wide to long.
+FRHD_data %>% gather(Q, value, -Pop, -sampleID,-k) -> FRHD_data
+FRHD_all_data <- rbind(FRHD_all_data,FRHD_data)
+}
+
+# view(FRHD_all_data)
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+# library(DataExplorer)
+# DataExplorer::create_report(FRHD_all_data)
+
+# mydata2 %>% group_by(sampleID) %>% summarise_at(vars(Pop,k,Q,value),funs(length))
+
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+# Set up factors and Pop order
+
+FRHD_all_data$k <- factor(FRHD_all_data$k, levels = c(1, 2, 3, 4, 5, 6, 7, 8, 9))
+
+FRHD_all_data$Pop <- factor(FRHD_all_data$Pop, levels = c("Senegal_Fulani_Linguere",
+                                            							"Gambia_Fula",
+                                            							"Senegal_Halpularen",
+                                            							"Mauritania_Fulani_Assaba",
+                                            							"Guinea_Fulani",
+                                            							"Mali_Fulani_InnerDelta",
+                                            							"Mali_Fulani_Diafarabe",
+                                            							"BurkinaFaso_Fulani_Banfora",
+                                            							"BurkinaFaso_Fulani_Ziniare",
+                                            							"BurkinaFaso_Fulani_Tindangou",
+                                            							"Niger_Fulani_Ader",
+                                            							"Niger_Fulani_Abalak",
+                                            							"Niger_Fulani_Zinder",
+                                            							"Niger_Fulani_Diffa",
+                                            							"Niger_Fulani_Balatungur",
+                                            							"Cameroon_Fulani_Tcheboua",
+                                            							"Chad_Fulani_Linia",
+                                            							"Chad_Fulani_Bongor",
+                                            							"Senegal_Bedik",
+                                            							"Gambia_GWD",
+                                            							"Gambia_Jola",
+                                            							"Gambia_Wolof",
+                                            							"Gambia_Mandinka",
+                                            							"SierraLeone_MSL",
+                                            							"Mali_Bwa",
+                                            							"BurkinaFaso_Gurmantche",
+                                            							"BurkinaFaso_Gurunsi",
+                                            							"BurkinaFaso_Mossi",
+                                            							"IvoryCoast_Ahizi",
+                                            							"IvoryCoast_Yacouba",
+                                            							"Ghana_GaAdangbe",
+                                            							"Benin_Bariba",
+                                            							"Benin_Fon",
+                                            							"Benin_Yoruba",
+                                            							"Nigeria_YRI",
+                                            							"Nigeria_ESN",
+                                            							"Nigeria_Igbo",
+                                            							"Chad_Daza",
+                                            							"Chad_Kanembu",
+                                            							"Chad_Laal",
+                                            							"Chad_Sara",
+                                            							"Chad_Toubou",
+                                            							"Sudan_Daju",
+                                            							"Sudan_NubaKoalib",
+                                            							"Sudan_Nubian",
+                                            							"Sudan_Zaghawa",
+                                            							"Ethiopia_Gumuz",
+                                            							"Ethiopia_Wolayta",
+                                            							"Ethiopia_Amhara",
+                                            							"Ethiopia_Oromo",
+                                            							"Ethiopia_Somali",
+                                            							"Morocco_BerberAsni",
+                                            							"Morocco_BerberBouhria",
+                                            							"Morocco_BerberFiguig",
+                                            							"Egypt_Egyptian",
+                                            							"Lebanon_LebaneseChristian",
+                                            							"Lebanon_LebaneseDruze",
+                                            							"Lebanon_LebaneseMuslim",
+                                            							"Yemen_Yemeni",
+                                            							"Europe_SouthPortugal",
+                                            							"Europe_SpainGranada",
+                                            							"Europe_SpainHuelva",
+                                            							"Europe_IBS",
+                                            							"Europe_TSI",
+                                            							"Europe_CEU",
+                                            							"Europe_GBR"
+                                            							))
+
+FRHD_all_data$couple<-paste(FRHD_all_data$k,FRHD_all_data$Q)
+FRHD_all_data$couple<- as.factor(FRHD_all_data$couple)
+
+FRHD_cols_revised <- 
+c("1 Q1" = "#377eb8",
+"2 Q1" = "#e41a1c",
+"2 Q2" = "#377eb8",
+"3 Q1" = "#e41a1c",
+"3 Q2" = "#377eb8",
+"3 Q3" = "#4daf4a",
+"4 Q1" = "#377eb8",
+"4 Q2" = "#e41a1c",
+"4 Q3" = "#984ea3",
+"4 Q4" = "#4daf4a",
+"5 Q1" = "#377eb8",
+"5 Q2" = "#ff7f00",
+"5 Q3" = "#e41a1c",
+"5 Q4" = "#4daf4a",
+"5 Q5" = "#984ea3",
+"6 Q1" = "#4daf4a",
+"6 Q2" = "#377eb8",
+"6 Q3" = "#e41a1c",
+"6 Q4" = "#984ea3",
+"6 Q5" = "#ff7f00",
+"6 Q6" = "#ffff33",
+"7 Q1" = "#e41a1c",
+"7 Q2" = "#ffff33",
+"7 Q3" = "#377eb8",
+"7 Q4" = "#ff7f00",
+"7 Q5" = "#984ea3",
+"7 Q6" = "#4daf4a",
+"7 Q7" = "#a65628",
+"8 Q1" = "#377eb8",
+"8 Q2" = "#e41a1c",
+"8 Q3" = "#ffff33",
+"8 Q4" = "#4daf4a",
+"8 Q5" = "#a65628",
+"8 Q6" = "#984ea3",
+"8 Q7" = "#ff7f00",
+"8 Q8" = "#f781bf",
+"9 Q1" = "#ff7f00",
+"9 Q2" = "#ffff33",
+"9 Q3" = "#e41a1c",
+"9 Q4" = "#a65628",
+"9 Q5" = "#377eb8",
+"9 Q6" = "#f781bf",
+"9 Q7" = "#984ea3",
+"9 Q8" = "#4daf4a",
+"9 Q9" = "#999999")
+
+
+```
+
+Admixture full plots pre-final script
+
+```{r fig.height=18, fig.width=30, echo=TRUE, warning=FALSE, message=FALSE, include=FALSE}
+
+mydata3 = FRHD_all_data
+
+
+tibble(mydata3) %>%
+  mutate(Pop = as_factor(Pop),
+         k = as_factor(k),
+         Q = as.factor(Q),
+    couple = as.factor(couple),
+         x = as.character(sampleID)) %>%
+  group_by(Pop, k, value) %>%
+  # filter(Pop == "Niger_Fulani_Balatungur") %>% 
+  # filter(k == 7) %>%                           
+  ggplot(.,aes(x = sampleID,y=value,fill=couple, group=factor(Pop))) + 
+  geom_bar(stat="identity", position="stack", width = 1.5) +
+  facet_grid(cols = vars(Pop), rows = vars(k), switch = "x", scales = "free_x") +
+  # facet_grid(rows = vars(k), scales = "free_x") +
+  scale_fill_manual(values=FRHD_cols_revised, aesthetics=c("fill", "colour"))+
+  scale_y_continuous(breaks = c(0, 0.5, 1)) +
+  # scale_x_discrete(limits = rev(levels(mydata3$Pop))) + 
+  labs(title = "Fig. 11a",
+       subtitle ="Fulani_and_Reference_HD_DB_admixplot_full", 
+       caption ="233867 variants and 2691 people pass filters and QC.",
+       x="Populations", y="Ancestry") +
+  theme_minimal () +
+  theme(strip.placement = "outside",
+        legend.position="none",
+        panel.spacing.x = unit(0, "null"),
+        # panel.margin = unit(0,"null"),
+        panel.grid = element_blank(),
+        plot.title = element_text(size=16),
+        plot.subtitle = element_text(size = 16),
+        plot.caption = element_text(size = 14),
+        axis.title.x = element_text(size=16, face="bold"),
+        axis.title.y = element_text(size=16, face="bold"),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size=14),
+        strip.text.x =  element_text(size=14, angle = -90,hjust=0, face="bold"),
+        strip.text.y =  element_text(size=14, angle = 0, face="bold")) -> FRHD_admixplot_full
+
+# pdf("FRHD_admixplot_full.pdf", width = 30, height = 20)
+FRHD_admixplot_full
+# dev.off()
+# 
+jpeg("admixplot_FRHD.jpg",
+     units="in",width = 30, height = 15, res = 600, quality=100)
+FRHD_admixplot_full
+dev.off()
+
+# ggplotly(FRHD_admixplot_full)
+# scale_x_discrete(limits = rev(levels(mydata3$Pop))) +
+
+```
+
+```{r echo=FALSE, cache=FALSE, results=FALSE, warning=FALSE,  comment=FALSE, message= FALSE, eval =T, fig.height=14, fig.width=30}
+
+# library(readxl)
+# fulani_cv_error <- read_excel("Fulani_and_Reference_HD_DB/FRHD_all_data.xlsx", 
+#     sheet = "Feuil1")
+# View(fulani_cv_error)
+# 
+# summary(fulani_cv_error$value)
+# 
+# ggplot(fulani_cv_error, aes(x=Cluster, y=value, group=Group, color=Group))+
+#   geom_point()+
+#   geom_smooth() +
+#   labs(x="index", y="cv.error",
+#        title = "Fig. 11d",
+#        subtitle ="cross-validation error plot")+
+#   theme_minimal()+
+#   theme(plot.title = element_text(size=16, face="bold"),
+#         plot.subtitle = element_text(size = 16),
+#         legend.text = element_text(size = 16),
+#         axis.text = element_text(size=14),
+#         axis.title = element_text(size = 16, face="bold"))-> cv.error.plot
+
+
+FRHD_admixplot_full
+# cv.error.plot
+
+
+# jpeg("admixplot_cv.error_full.jpg",
+#      units="in",width = 20, height = 14, res = 600, quality=100)
+# cv.error.plot
+# dev.off()
+```
+
+
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, include=FALSE, fig.width=20, fig.height=14}
+
+
+pdf("admixture_full_plots.pdf", width = 26, height = 15)
+FRHD_admixplot_full
+FHD_admixplot_full
+FAHD_admixplot_full
+cv.error.plot
+dev.off()
+
+# dev.off()
+
+```
+

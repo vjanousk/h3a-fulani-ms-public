@@ -1,0 +1,195 @@
+---
+title: "Mantel test on all Fulani groups"
+author: "Vaclav Janousek"
+date: "09/08/2023"
+output: html_document
+---
+
+### Prepare the data
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/h3a-fulani/")
+
+library(tidyverse)
+library(geodist)
+library(ecodist)
+
+setwd("~/h3a-fulani/")
+
+
+# Read Fst values for pairs of Fulani populations
+read_tsv("data/pca-results/Fulani_all_HD_DB-164132-230322-fst/Fulani_all_HD_DB-fst.tsv",
+         col_names = TRUE) -> fst
+
+## Read populations data
+population_names <- unique(c(fst$POP1,fst$POP2))
+
+read_tsv("data/samples/comparative_data_all_populations.tsv") %>%
+  filter(population_label %in% population_names) -> populations
+```
+
+### Genetic distances (Fst)
+
+```{r genetic_distances}
+
+zero_dist <- tibble(data.frame(POP1=population_names, POP2=population_names,FST=0))
+
+fst %>% 
+  dplyr::select(POP1, POP2, FST) %>%
+  dplyr::union(zero_dist) %>%
+  tidyr::pivot_wider(id_cols="POP1",names_from="POP2",values_from="FST") %>%
+  dplyr::select(POP1,populations$population_label) %>%
+  dplyr::arrange(match(POP1, populations$population_label)) %>%
+  dplyr::select(populations$population_label) %>%
+  dplyr::mutate_all(~replace_na(.,0)) -> fst_dist_df
+
+dist_fst <- as.matrix(fst_dist_df) + t(as.matrix(fst_dist_df))
+rownames(dist_fst) <- populations$population_label
+colnames(dist_fst) <- populations$population_label
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_HD_DB_files/suppl-figure4A.pdf",width=10,height=10)
+heatmap(dist_fst,margins = c(15,15))
+dev.off()
+```
+
+### Geographic distances
+
+```{r geographic_distances}
+
+dist_geog <- geodist(populations %>% select(latitude, longitude),measure='geodesic')
+rownames(dist_geog) <- populations$population_label
+colnames(dist_geog) <- populations$population_label
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_HD_DB_files/suppl-figure4B.pdf",width=10,height=10)
+heatmap(dist_geog,margins = c(15, 15))
+dev.off()
+```
+
+### Mantel test
+
+```{r mantel_test}
+
+dist_fst = as.dist(dist_fst)
+dist_geog = as.dist(dist_geog)
+
+mantel(dist_fst~dist_geog, mrank=TRUE,nperm = 100000)
+```
+
+```{r mantel_test2}
+
+# Multiple regression on distance matrices
+
+MRM(dist_fst ~ dist_geog, nperm=10000,method="linear",mrank=TRUE)
+```
+
+```{r mantel_test3}
+
+# Multiple regression on distance matrices
+
+subsistence=dist(ifelse(populations$lifestyle2=="Farmers",0,1),method="binary")
+
+m <- MRM(dist_fst ~ dist_geog + subsistence, nperm=100000,method="linear",mrank=TRUE)
+
+m
+```
+
+### Distances by subsistence - pastoralists
+
+```{r subsistence_distances_pastoralists}
+
+pastoralists <- (populations %>% dplyr::filter(lifestyle2 == "Pastoralists"))$population_label
+
+zero_dist <- tibble(data.frame(POP1=pastoralists, POP2=pastoralists,FST=0))
+
+fst %>% 
+  dplyr::filter(POP1 %in% pastoralists) %>%
+  dplyr::filter(POP2 %in% pastoralists) %>%
+  dplyr::select(POP1, POP2, FST) %>%
+  dplyr::union(zero_dist) %>%
+  tidyr::pivot_wider(id_cols="POP1",names_from="POP2",values_from="FST") %>%
+  dplyr::select(POP1,pastoralists) %>%
+  dplyr::arrange(match(POP1, pastoralists)) %>%
+  dplyr::select(all_of(pastoralists)) %>%
+  dplyr::mutate_all(~replace_na(.,0)) -> fst_dist_pastoralists_df
+
+dist_fst_pastoralists <- as.matrix(fst_dist_pastoralists_df) + t(as.matrix(fst_dist_pastoralists_df))
+rownames(dist_fst_pastoralists) <- pastoralists
+colnames(dist_fst_pastoralists) <- pastoralists
+
+
+dist_geog_pastoralists <- geodist(populations %>% 
+                       dplyr::filter(population_label %in% pastoralists) %>% 
+                       dplyr::select(latitude, longitude),measure='geodesic')
+rownames(dist_geog_pastoralists) <- pastoralists
+colnames(dist_geog_pastoralists) <- pastoralists
+```
+
+```{r subsistence_distances_pastoralists_mantel}
+
+dist_fst_pastoralists = as.dist(dist_fst_pastoralists)
+
+dist_geog_pastoralists = as.dist(dist_geog_pastoralists)
+
+mantel(dist_fst_pastoralists ~ dist_geog_pastoralists, mrank = TRUE, nperm = 100000)
+```
+
+```{r subsistence_distances_pastoralists_mantel2}
+
+# Multiple regression on distance matrices
+
+MRM(dist_fst_pastoralists ~ dist_geog_pastoralists, nperm=10000,method="linear",mrank=TRUE)
+```
+
+### Distances by subsistence - farmers
+
+```{r subsistence_distances_farmers}
+
+farmers <- (populations %>% dplyr::filter(lifestyle2 == "Farmers"))$population_label
+
+zero_dist <- tibble(data.frame(POP1=farmers, POP2=farmers,FST=0))
+
+fst %>% 
+  dplyr::filter(POP1 %in% farmers) %>%
+  dplyr::filter(POP2 %in% farmers) %>%
+  dplyr::select(POP1, POP2, FST) %>%
+  dplyr::union(zero_dist) %>%
+  tidyr::pivot_wider(id_cols="POP1",names_from="POP2",values_from="FST") %>%
+  dplyr::select(POP1,farmers) %>%
+  dplyr::arrange(match(POP1, farmers)) %>%
+  dplyr::select(all_of(farmers)) %>%
+  dplyr::mutate_all(~replace_na(.,0)) -> fst_dist_farmers_df
+
+dist_fst_farmers <- as.matrix(fst_dist_farmers_df) + t(as.matrix(fst_dist_farmers_df))
+rownames(dist_fst_farmers) <- farmers
+colnames(dist_fst_farmers) <- farmers
+
+
+dist_geog_farmers <- geodist(populations %>% 
+                       dplyr::filter(population_label %in% farmers) %>% 
+                       dplyr::select(latitude, longitude),measure='geodesic')
+rownames(dist_geog_farmers) <- farmers
+colnames(dist_geog_farmers) <- farmers
+```
+
+```{r subsistence_distances_farmers_mantel}
+
+dist_fst_farmers = as.dist(dist_fst_farmers)
+
+dist_geog_farmers = as.dist(dist_geog_farmers)
+
+mantel(dist_geog_farmers ~ dist_fst_farmers, mrank = TRUE, nperm = 1000)
+```
+
+```{r subsistence_distances_farmers_mantel2}
+
+# Multiple regression on distance matrices
+
+MRM(dist_fst_farmers ~ dist_geog_farmers, nperm=10000,method="linear",mrank=TRUE)
+```

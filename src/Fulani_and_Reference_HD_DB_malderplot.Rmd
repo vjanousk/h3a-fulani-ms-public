@@ -1,0 +1,174 @@
+---
+title: "malder-reports"
+author: "MameYoro"
+date: "19/05/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd("~/ResearchRepository/Projects/h3a-fulani/malder-reports")
+
+#libraries
+library(tidyverse)
+library(forcats)
+library(ggthemes)
+library(patchwork)
+library(RColorBrewer)
+library(plotly)
+library(ggsci)
+```
+
+```{r include=FALSE, message=FALSE, warning=FALSE, echo=TRUE, include=FALSE}
+test11_maldersuccess<-read.table("test11_outputSuccessMalder.cat.txt")
+colnames(test11_maldersuccess)<-c("test", "status", "p-value", "test_pop","ref_A","ref_B", "Zscore",  "divergenceTime", "null", "interval")
+
+ThisYear<-2020  # to have the admixture times in calendar years
+generationyeras<-25  # chose your generation time
+
+test11_maldersuccess$AgeCalendarYear<-ThisYear-(test11_maldersuccess$divergenceTime*generationyeras)
+test11_maldersuccess$Min<-ThisYear-((test11_maldersuccess$divergenceTime+test11_maldersuccess$interval)*generationyeras)
+test11_maldersuccess$Max<-ThisYear-((test11_maldersuccess$divergenceTime-test11_maldersuccess$interval)*generationyeras)
+test11_maldersuccess$couple<-paste(test11_maldersuccess$ref_A,test11_maldersuccess$ref_B)
+
+
+```
+
+Malder multiple ref test divergenceTime
+
+```{r echo=TRUE, fig.height=14, fig.width=25, message=FALSE, warning=FALSE, include=FALSE, echo=TRUE}
+
+test11_maldersuccess$status = as.character(test11_maldersuccess$status)
+test11_maldersuccess$status[test11_maldersuccess$status == "test11a_success"] = "Sahel/Savannah pop weighted"
+test11_maldersuccess$status[test11_maldersuccess$status == "test11b_success"] = "North Afica pop weighted"
+
+test11_maldersuccess$test_pop <- factor(test11_maldersuccess$test_pop, levels = c("Senegal_Fulani_Linguere",
+                                            							"Gambia_Fula",
+                                            							"Senegal_Halpularen",
+                                            							"Mauritania_Fulani_Assaba",
+                                            							"Guinea_Fulani",
+                                            							"Mali_Fulani_InnerDelta",
+                                            							"Mali_Fulani_Diafarabe",
+                                            							"BurkinaFaso_Fulani_Banfora",
+                                            							"BurkinaFaso_Fulani_Ziniare",
+                                            							"BurkinaFaso_Fulani_Tindangou",
+                                            							"Niger_Fulani_Ader",
+                                            							"Niger_Fulani_Abalak",
+                                            							"Niger_Fulani_Zinder",
+                                            							"Niger_Fulani_Diffa",
+                                            							"Niger_Fulani_Balatungur",
+                                            							"Cameroon_Fulani_Tcheboua",
+                                            							"Chad_Fulani_Linia",
+                                            							"Chad_Fulani_Bongor"))
+
+test11_maldersuccess_plot <- ggplot(test11_maldersuccess, 
+                                     aes(x=divergenceTime, y=test_pop, color = factor(couple), size=Zscore)) +
+                          geom_errorbarh(aes(xmin=divergenceTime+interval,xmax=divergenceTime-interval), alpha=0.2) +
+                          geom_point(na.rm=TRUE)+
+                          scale_color_brewer(palette="Set1",name="weighted pop") +
+                          labs(title = "Fig. 13a",
+                               subtitle ="Malder multiple ref test divergenceTime", 
+                               caption ="233867 variants and 2691 people pass filters and QC.",
+                               x="Divergence time in generations") +
+                          theme_bw () + 
+                          scale_y_discrete("tested pop", limits = rev(levels(test11_maldersuccess$test_pop))) +
+                          facet_wrap(~status, ncol = 2, scales = "free_x")+
+                          theme(# panel.spacing.x = unit(1, "lines"),
+                                # panel.margin.x=unit(2, "lines") ,
+                                legend.title = element_text(size = 14, vjust = .5, face = "bold"),
+                                legend.text = element_text(size = 14, vjust = .5),
+                                legend.background = element_rect(fill = "white", color = "black"),
+                                plot.title = element_text(size=14),
+                                plot.subtitle = element_text(size = 14),
+                                plot.caption = element_text(size = 14),
+                                axis.title.x = element_text(size=16, face="bold"),
+                                axis.title.y = element_text(size=16, face="bold"),
+                                axis.text.x = element_text(size=14),
+                                axis.text.y = element_text(size=14),
+                                strip.text.x =  element_text(size=14))
+
+# pdf("DivergenceTime test11a.pdf")
+test11_maldersuccess_plot
+# dev.off()
+# 
+# jpeg("~/ResearchRepository/Projects/h3a-fulani/malder-reports/divergenceTime.jpg",
+#      units="in",width = 25, height = 14, res = 300, quality=100)
+# test11_maldersuccess_plot
+# dev.off()
+# 
+# ggplotly(test11_maldersuccess_plot)
+```
+
+Malder multiple ref test admixture LD curve by tested pop
+
+```{r fig.width = 25, fig.height = 12, message=FALSE, warning=FALSE, fig.margin=TRUE}
+
+library(readxl)
+test11_LD <- read_excel("~/ResearchRepository/Projects/h3a-fulani/malder-reports/all_maldersuccess.xlsx", 
+    sheet = "LD Decay test11")
+# View(test11_LD)
+
+test11_LD$Target <- factor(test11_LD$Target, levels=c("Senegal_Fulani_Linguere",
+"Senegal_Halpularen",
+"Mauritania_Fulani_Assaba",
+"Guinea_Fulani",
+"Mali_Fulani_Diafarabe",
+"Mali_Fulani_InnerDelta",
+"BurkinaFaso_Fulani_Banfora",
+"BurkinaFaso_Fulani_Ziniare",
+"BurkinaFaso_Fulani_Tindangou",
+"Niger_Fulani_Ader",
+"Niger_Fulani_Abalak",
+"Niger_Fulani_Zinder",
+"Niger_Fulani_Diffa",
+"Niger_Fulani_Balatungur",
+"Cameroon_Fulani_Tcheboua",
+"Chad_Fulani_Bongor",
+"Chad_Fulani_Linia"))
+
+gg<-ggplot(test11_LD,aes(x=d, y=value, color=variable))+
+  geom_point(aes(x=d,y = Chad_Toubou.Morocco_BerberAsni, col="Chad_Toubou.Morocco_BerberAsni"), shape=3, size=0.02)+
+  geom_point(aes(x=d,y = Chad_Toubou.Yemen_Yemeni, col="Chad_Toubou.Yemen_Yemeni"), shape=3, size=0.02)+
+  geom_point(aes(x=d,y = Senegal_Bedik.Chad_Toubou, col="Senegal_Bedik.Chad_Toubou"), shape=3, size=0.02)+
+  geom_point(aes(x=d,y = Senegal_Bedik.Morocco_BerberAsni, col="Senegal_Bedik.Morocco_BerberAsni"), shape=3, size=0.02)+
+  geom_point(aes(x=d,y = Senegal_Bedik.Yemen_Yemeni, col="Senegal_Bedik.Yemen_Yemeni"), shape=3, size=0.02)+
+  scale_color_brewer(palette="Set1",name="weighted pop") +
+  xlab("Genetic distance (cM)") + ylab("Weighted LD") +
+  labs(title = "Fig. 13b",subtitle ="Malder multiple ref test admixture LD curve by tested pop", 
+       caption ="233867 variants and 2691 people pass filters and QC.") +
+  theme_bw() +
+  theme(# panel.spacing.x = unit(1, "lines"),
+    #legend.position = c(0.87, 0.25),
+    legend.title = element_text(size = 14, vjust = .5, face = "bold"),
+    legend.text = element_text(size = 14, vjust = .5),
+    legend.background = element_rect(fill = "white", color = "black"),
+    plot.subtitle = element_text(size = 14),
+    plot.caption = element_text(size = 14),
+    axis.title.x = element_text(size=16, face="bold"),
+    axis.title.y = element_text(size=16, face="bold"),
+    axis.text.x = element_text(size=14),
+    axis.text.y = element_text(size=14),
+    strip.text.x =  element_text(size=14))+
+  facet_wrap(~Target, ncol=5)
+
+# jpeg("~/ResearchRepository/Projects/h3a-fulani/malder-reports/LD-decay-curve.jpg",
+#     units="in",width = 25, height = 14, res = 300, quality=100)
+gg
+# dev.off()
+# 
+# ggsave("malder_test11_LDdecay_2sources.pdf", useDingbats=FALSE, width = 25, height = 14)
+# 
+# ggplotly(gg)
+```
+
+
+
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, include=FALSE}
+pdf("malder_full_plots.pdf", width = 25, height = 14)
+test11_maldersuccess_plot
+gg
+dev.off()
+```
+

@@ -1,0 +1,575 @@
+---
+title: "Principal Component Analysis Report for All Fulani Groups (Fulani_all_HD_DB)"
+date: "`r Sys.Date()`"
+output: html_document
+always_allow_html: true
+---
+
+------------------------------------------------------------------------
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_knit$set(root.dir = "~/h3a-fulani/")
+
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+library(umap)
+library(cluster)
+library(ggrepel)
+library(ggbeeswarm)
+library(wesanderson)
+library(patchwork)
+
+library(gridExtra)
+
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+#library(maps)
+```
+
+### Eigen Values
+
+```{r eigen_values}
+
+data="data/pca-results/Fulani_all_HD_DB-164132-230322/Fulani_all_HD_DB.pca.evec"
+
+read_table(data, 
+           col_names = FALSE, n_max=1)[2:11] %>% unlist(., use.names=FALSE) -> eigen
+
+eigen <- tibble(pc = c(1:10), eigen=eigen)
+
+p <- ggplot(eigen, aes(x=pc, y=eigen)) +
+      geom_line(col="grey") +
+      geom_point(col="dark blue") +
+      theme_bw() +
+      ylab("Eigen Value") +
+      xlab("Principal Component")
+
+# jpeg("src/rmd-reports/pca-report-Fulani_all_HD_DB_files/pca-eigen-value-Fulani_all_HD_DB.jpg",
+#      units="in",width = 8, height = 4, res = 300, quality=100)
+# p
+# dev.off()
+
+p
+```
+
+### Loading and process PCA data
+
+```{r load_data, include=FALSE}
+
+pc <- as.character(paste0("PC",c(1:10)))
+
+read_table(data, 
+           col_names = FALSE, skip=1) %>%
+  dplyr::select(c(1:11)) %>%
+  dplyr::rename_at(vars(as.character(paste0("X",c(1:11)))),
+            ~c("id",pc)) %>% 
+  tidyr::separate(id, into=c("population_label","sample_id"), sep=":") -> pca
+
+
+## Read populations data
+population_names <- unique(pca$population_label)
+
+read_tsv("data/samples/comparative_data_all_populations.tsv") %>%
+  filter(population_label %in% population_names) -> populations
+
+pca %>% 
+  dplyr::group_by(population_label) %>%
+  dplyr::summarize(n=length(sample_id),
+            PC1=mean(PC1),
+            PC2=mean(PC2),
+            PC3=mean(PC3),
+            PC4=mean(PC4),) %>%
+  dplyr::inner_join(populations %>% 
+               dplyr::select(population_label, longitude, latitude, lifestyle2, region, country), 
+             by=c("population_label" = "population_label")) -> pca_by_pop
+
+pca %>% 
+  dplyr::inner_join(populations %>% 
+               dplyr::select(population_label, longitude, latitude, lifestyle2, region, country), 
+             by=c("population_label" = "population_label")) -> pca_with_pop
+
+
+```
+
+```{r fulani_map}
+
+populations$population_label <- reorder(populations$population_label, populations$longitude)
+
+c_pal <- wes_palette("Zissou1", 18, type = "continuous")
+
+shapes <- rep(c(1:18)[-11],2)[c(1:18)]
+
+# c_pal <- c("#FDBB84","#FDBB84","#FDBB84",
+# "#FC8D59","#FC8D59","#FC8D59",
+# "#EF6548","#EF6548","#EF6548",
+# "#D7301F","#D7301F","#D7301F",
+# "#B30000","#B30000","#B30000",
+# "#7F0000","#7F0000","#7F0000")
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+plot_map <- ggplot(data = world) +
+    geom_sf(color = "black", fill="white") +
+    xlab("Longitude") + ylab("Latitude") +
+    theme_bw() +
+    coord_sf(xlim = c(-20.0, 25.0), ylim = c(0.0, 25.0), expand = TRUE) +
+    geom_point(data = populations, 
+               aes(x=longitude, y=latitude, color=population_label, shape=population_label), 
+               size=2.2, stroke = 0.6) +
+    scale_colour_manual(values = c_pal,
+                        name="Fulani group") +
+    scale_shape_manual(values = shapes,name="Fulani group") +
+    theme(legend.text = element_text(size=6),
+        legend.title = element_text(size=10, face="bold"),
+        legend.key.size = unit(0.3,"cm"),
+        plot.title = element_text(hjust = -0.15, vjust=2)) +
+    guides(color = guide_legend(ncol=1)) +
+    ggtitle("A")
+
+plot_map
+
+#geom_sf_text(aes(label=sovereignt),alpha=0.5,color="black",size=2) +
+```
+
+Principal component analysis for Fulani populations that were genotyped using H3A array & other Fulani populations including Halpularen that were genotyped in another studies (database Fulani_all_HD_DB). The analysis was carried using SMARTPCA as part of EIGENSOFT package.
+
+### Distribution of samples along the main principal components
+
+------------------------------------------------------------------------
+
+```{r}
+
+pca_with_pop$population_label <- reorder(pca_with_pop$population_label, pca_with_pop$longitude)
+
+pca_with_pop$population_label <- factor(pca_with_pop$population_label, levels=populations$population_label[order(populations$population_label)])
+
+plot_pca <- ggplot(pca_with_pop, aes(x=PC1, y=PC2, color=population_label, shape=population_label)) +
+  geom_point() +
+  scale_colour_manual(values = c_pal,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],2)[c(1:18)],name="Population") +
+  theme_bw() +
+  theme(legend.position = "none",
+        title = element_text(size=8),
+        axis.title = element_text(size=10),) +
+  ggtitle("")
+
+plot_pca
+```
+
+```{r}
+
+pca_with_pop$population_label <- reorder(pca_with_pop$population_label, pca_with_pop$longitude)
+
+plot_pca13 <- ggplot(pca_with_pop, aes(x=PC1, y=PC3, color=population_label, shape=population_label)) +
+  geom_point() +
+  scale_colour_manual(values = c_pal,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],2)[c(1:18)],name="Population") +
+  theme_bw() +
+  theme(legend.title = element_text(size=10,face="bold"),
+        axis.title = element_text(size=10),
+        legend.key.size = unit(0.2,"cm")) +
+  ggtitle("")
+
+plot_pca13
+```
+
+```{r}
+
+pca_with_pop$population_label <- reorder(pca_with_pop$population_label, pca_with_pop$longitude)
+
+plot_pca13 <- ggplot(pca_with_pop, aes(x=PC1, y=PC3, color=population_label, shape=population_label)) +
+  geom_point() +
+  scale_colour_manual(values = c_pal,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],2)[c(1:18)],name="Population") +
+  theme_bw() +
+  theme(legend.position = "none") +
+  ggtitle("")
+
+plot_pca13
+```
+
+```{r}
+
+plot_pca23 <- ggplot(pca_with_pop, aes(x=PC2, y=PC3, color=population_label, shape=population_label)) +
+  geom_point() +
+  scale_colour_manual(values = c_pal,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],2)[c(1:18)],name="Population") +
+  theme_bw() +
+  theme(legend.position="none") +
+  ggtitle("")
+
+plot_pca23
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_HD_DB_files/suppl-figure1-v3.pdf",width=6,height=8)
+plot_pca13 + plot_pca23 + plot_layout(guides = 'collect',heights = c(1,1))
+dev.off()
+```
+
+### UMAP embeddings of all PCs
+
+------------------------------------------------------------------------
+
+All 10 PCs were embedded into two dimensional space using Uniform Manifold Representation and Projection (UMAP).
+
+```{r umap}
+
+umap.config = umap.defaults
+
+umap.config$n_neighbors=20
+umap.config$min_dist=0.1
+umap.config$spread=0.4
+umap.config$n_epochs=1000
+
+# umap.config$n_neighbors=20
+# umap.config$min_dist=0.1
+# umap.config$spread=0.4
+# umap.config$n_epochs=1000
+
+pca.umap = umap(pca_with_pop[3:12],config=umap.config,preserve.seed=TRUE)
+
+tibble(sample_id=pca_with_pop$sample_id, 
+       population_label=pca_with_pop$population_label, 
+       longitude=pca_with_pop$longitude,
+       latitude=pca_with_pop$latitude,
+       x=pca.umap$layout[,1], 
+       y=pca.umap$layout[,2]) -> pca.umap.tibble
+```
+
+```{r}
+
+## Saved result of the UMAP to be able to reproduce graphs
+pca.umap.tibble %>% write_tsv("src/rmd-reports/pca-report-Fulani_HD_DB_files/pca_umap_fulani_16082023.tsv",col_names = TRUE)
+```
+
+```{r}
+
+## Read latest result of the UMAP
+pca.umap.tibble <- read_tsv("src/rmd-reports/pca-report-Fulani_HD_DB_files/pca_umap_fulani_16082023.tsv",col_names = TRUE)
+```
+
+```{r}
+
+pca.umap.tibble$population_label <- reorder(pca.umap.tibble$population_label, pca.umap.tibble$longitude)
+
+#pca.umap.tibble$population_label <- factor(pca.umap.tibble$population_label, levels=populations$population_label[order(populations$population_label)])
+
+plot_umap <- ggplot(pca.umap.tibble, aes(x=-1*x, y=y, color=population_label, shape=population_label)) +
+  geom_point(alpha=0.8,size=2) +
+  scale_colour_manual(values = c_pal,name="Population") +
+  scale_shape_manual(values = rep(c(1:18)[-11],2)[c(1:18)],name="Population") +
+  xlab("UMAP1") +
+  ylab("UMAP2") +
+  theme_bw() +
+  theme(legend.position="none",
+        axis.title = element_text(size=10),
+        title = element_text(size=8)) +
+  ggtitle(paste0("UMAP: n_neighbors=",20,"; min_dist=",0.1,"; spread=",0.4))
+
+plot_umap
+```
+
+### Composite plot Figure 1
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_HD_DB_files/figure1-composite.pdf",width=8,height=8)
+grid.arrange(plot_map, plot_pca, plot_umap, ncol = 2, 
+             layout_matrix = rbind(c(1,1), c(2,3)))
+dev.off()
+```
+
+```{r}
+
+tiff("src/rmd-reports/pca-report-Fulani_HD_DB_files/figure1-composite.tiff", units="in", width=8, height=8, res=300)
+grid.arrange(plot_map, plot_pca, plot_umap, ncol = 2, 
+             layout_matrix = rbind(c(1,1), c(2,3)))
+dev.off()
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_HD_DB_files/figure1-composite-2.pdf",width=8,height=8)
+( plot_map ) / ( plot_pca | plot_umap)  +  plot_layout(guides = 'collect',heights = c(1, 0.8))
+dev.off()
+```
+
+### Variability in PC values by populations
+
+------------------------------------------------------------------------
+
+Variability in the principal component values among populations was tested by Kruskal-Wallis test (non-parametric ANOVA) to see whether there statistically significant variability between populations. For all main principal components the Kruskal-Wallis test was highly statistically significant:
+
+```{r kruskal wallis, echo=FALSE}
+
+kwt1 = kruskal.test(PC1 ~ factor(population_label), data = pca)
+kwt2 = kruskal.test(PC2 ~ factor(population_label), data = pca)
+kwt3 = kruskal.test(PC3 ~ factor(population_label), data = pca)
+kwt4 = kruskal.test(PC4 ~ factor(population_label), data = pca)
+
+pc = c(1, 2, 3, 4)
+kwstat = c(kwt1$statistic[[1]], kwt2$statistic[[1]], kwt3$statistic[[1]], kwt4$statistic[[1]])
+kwdf = c(kwt1$parameter[[1]], kwt2$parameter[[1]], kwt3$parameter[[1]], kwt4$parameter[[1]])
+kwpval = c(kwt1$p.value[[1]], kwt2$p.value[[1]], kwt3$p.value[[1]], kwt4$p.value[[1]])
+
+tibble(pc=pc, 
+       kwstat=kwstat, 
+       kwdf=kwdf,
+       kwpval=kwpval) -> kwsummary
+
+kable(kwsummary,
+      col.names = c("Principal Component",
+                    "Kruskal-Wallis chi-squared",
+                    "df",
+                    "p-value")) %>%
+  kable_styling(full_width = F, position = "center")
+```
+
+Distribution principal component values by populations. Populations are ordered by longitude from west-most to east-most populations. Color-coding corresponds to those in PCA scatter plots.
+
+```{r}
+
+pointsize=0.5
+
+plot_pc1 = ggplot(pca_with_pop, aes(x=population_label, y=PC1, color=lifestyle2)) +
+  geom_beeswarm(size=pointsize) +
+  scale_color_manual(values = c("red","dark green"),name="Subsistence") +
+  xlab("") +
+  ggtitle("PC1") +
+  theme_bw() +
+  theme(axis.title = element_blank(),
+        axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(angle = 90, vjust=0.5, hjust=1,size=6),
+        legend.position="none")
+
+plot_pc2 = ggplot(pca_with_pop, aes(x=population_label, y=PC2, color=lifestyle2)) +
+  geom_beeswarm(size=pointsize) +
+  scale_color_manual(values = c("red","dark green"),name="Subsistence") +
+  xlab("") +
+  ggtitle("PC2") +
+  theme_bw() +
+  theme(axis.title = element_blank(),
+        axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(angle = 90, vjust=0.5, hjust=1,size=6),
+        legend.position="none")
+
+plot_pc3 = ggplot(pca_with_pop, aes(x=population_label, y=PC3, color=lifestyle2)) +
+  geom_beeswarm(size=pointsize) +
+  scale_color_manual(values = c("red","dark green"),name="Subsistence") +
+  xlab("") +
+  ggtitle("PC3") +
+  theme_bw() +
+  theme(axis.title = element_blank(),
+        axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(angle = 90, vjust=0.5, hjust=1,size=6),
+        legend.position="none")
+
+plot_pc4 = ggplot(pca_with_pop, aes(x=population_label, y=PC4, color=lifestyle2)) +
+  geom_beeswarm(size=pointsize) +
+  scale_color_manual(values = c("red","dark green"),name="Subsistence") +
+  xlab("") +
+  ggtitle("PC4") +
+  theme_bw() +
+  theme(axis.title = element_blank(),
+        axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(angle = 90, vjust=0.5, hjust=1,size=6),
+        legend.position="none")
+
+#( p1 + p2 ) / ( p3 + p4 )
+plot_pc1 | plot_pc2 | plot_pc3 | plot_pc4 + plot_layout(guides = 'collect') & theme(legend.position = "right")
+```
+
+```{r}
+pdf("src/rmd-reports/pca-report-Fulani_HD_DB_files/supple-figure2.pdf",width=8,height=5)
+plot_pc1 | plot_pc2 | plot_pc3 + plot_layout(guides = 'collect') & theme(legend.position = "right")
+dev.off()
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_HD_DB_files/figure1-composite-2.pdf",width=8,height=8)
+( plot_map ) / ( plot_pca | plot_umap)  +  plot_layout(guides = 'collect',heights = c(1, 0.8))
+dev.off()
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_HD_DB_files/figure1-composite.pdf",width=8,height=8)
+grid.arrange(plot_map, plot_pca, plot_umap, ncol = 2, 
+             layout_matrix = rbind(c(1,1), c(2,3)))
+dev.off()
+```
+
+### Correlation of between principal components, geographic coordinates and subsistence
+
+------------------------------------------------------------------------
+
+The main four principal components were correlated with longitude and latitude. The first three components exhibited statistically significant correlation for longitude and latitude. The highest correlation coefficient was for principal component 2 and 3 and longitude, i.e. west-east gradient. The first principal component is rather characteristic long tails suggesting admixture.
+
+#### PC1 \~ geography \* subsistence
+
+```{r}
+
+plot_pc1_lon_subs <- ggplot(pca_by_pop, 
+       aes(x=longitude,y=PC1,color=lifestyle2,size=n,label=population_label)) +
+  geom_smooth(method="lm", se=FALSE, color="black",size=0.5,linetype="dashed",fullrange=FALSE) +
+  geom_point() +
+  geom_text_repel(color="dark grey",size=2) +
+  scale_color_manual(name="Subsistence",values=c("red","dark green"),labels=c("Farmers","Pastoralists")) +
+  scale_size_continuous(name="Sample size",limits = c(10,90)) +
+  xlab("Longitude") +
+  ylab("PC1") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+plot_pc1_lon_subs
+```
+
+```{r}
+
+plot_pc1_lat_subs <- ggplot(pca_by_pop, 
+       aes(x=latitude,y=PC1,color=lifestyle2,size=n,label=population_label)) +
+  geom_smooth(method="lm", se=FALSE, color="black",size=0.5,linetype="dashed",fullrange=TRUE) +
+  geom_point() +
+  geom_text_repel(color="dark grey",size=2) +
+  scale_color_manual(name="Subsistence",values=c("red","dark green"),labels=c("Farmers","Pastoralists")) +
+  scale_size_continuous(name="Sample size",limits = c(10,90)) +
+  xlab("Latitude") +
+  ylab("PC1") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+plot_pc1_lat_subs
+```
+
+```{r}
+
+step(lm(PC1 ~ longitude*latitude*lifestyle2, data=pca_by_pop))
+```
+
+```{r}
+
+m_pc1 <- lm(PC1 ~ longitude + lifestyle2, data=pca_by_pop)
+
+af <- anova(m_pc1)
+
+afss <- af$"Sum Sq"
+
+print(cbind(af,PctExp=afss/sum(afss)*100))
+```
+
+```{r}
+
+summary(m_pc1)
+```
+
+#### PC2 \~ geography \* subsistence
+
+```{r}
+
+plot_pc2_lon_subs <- ggplot(pca_by_pop %>% filter(population_label!="Senegal_Fulani_Linguere"), 
+       aes(x=longitude,y=PC2,color=lifestyle2,size=n,label=population_label)) +
+  geom_smooth(method="lm", se=FALSE, color="black",size=0.5,linetype="dashed",fullrange=TRUE) +
+  geom_point() +
+  geom_text_repel(color="dark grey",size=2) +
+  scale_color_manual(name="Subsistence",values=c("red","dark green"),labels=c("Farmers","Pastoralists")) +
+  scale_size_continuous(name="Sample size",limits = c(10,90)) +
+  xlab("Longitude") +
+  ylab("PC2") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+plot_pc2_lon_subs
+```
+
+```{r}
+
+plot_pc2_lat_subs <- ggplot(pca_by_pop %>% filter(population_label!="Senegal_Fulani_Linguere"), 
+       aes(x=latitude,y=PC2,color=lifestyle2,size=n,label=population_label)) +
+  geom_smooth(method="lm", se=FALSE, color="black",size=0.5,linetype="dashed",fullrange=TRUE) +
+  geom_point() +
+  geom_text_repel(color="dark grey",size=2) +
+  scale_color_manual(name="Subsistence",values=c("red","dark green"),labels=c("Farmers","Pastoralists")) +
+  xlab("Latitude") +
+  ylab("PC2") +
+  scale_size_continuous(name="Sample size",limits = c(10,90)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+plot_pc2_lat_subs
+```
+
+```{r}
+
+step(lm(PC2 ~ longitude*latitude*lifestyle2, data=pca_by_pop %>% filter(population_label!="Senegal_Fulani_Linguere")))
+```
+
+```{r}
+
+m_pc2 <- lm(PC2 ~ longitude + lifestyle2, 
+            data=pca_by_pop %>% filter(population_label!="Senegal_Fulani_Linguere"))
+
+af <- anova(m_pc2)
+
+afss <- af$"Sum Sq"
+
+print(cbind(af,PctExp=afss/sum(afss)*100))
+```
+
+```{r}
+
+summary(m_pc2)
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_HD_DB_files/supple-figure3.pdf",width=10,height=8)
+( plot_pc1_lon_subs + plot_pc1_lat_subs ) / ( plot_pc2_lon_subs + plot_pc2_lat_subs ) + plot_layout(guides = 'collect') & theme(legend.position = "right")
+dev.off()
+```
+
+```{r}
+
+plot_pc2_lon_subs <- ggplot(pca_by_pop, 
+       aes(x=longitude,y=PC2,color=lifestyle2,size=n,label=population_label)) +
+  geom_smooth(method="lm", se=FALSE, color="black",size=0.5,linetype="dashed",fullrange=TRUE) +
+  geom_point() +
+  geom_text_repel(color="dark grey",size=2) +
+  scale_color_manual(name="Subsistence",values=c("red","dark green"),labels=c("Farmers","Pastoralists")) +
+  scale_size_continuous(name="Sample size",limits = c(10,90)) +
+  xlab("Longitude") +
+  ylab("PC2") +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+plot_pc2_lon_subs
+```
+
+```{r}
+
+plot_pc2_lat_subs <- ggplot(pca_by_pop, 
+       aes(x=latitude,y=PC2,color=lifestyle2,size=n,label=population_label)) +
+  geom_smooth(method="lm", se=FALSE, color="black",size=0.5,linetype="dashed",fullrange=TRUE) +
+  geom_point() +
+  geom_text_repel(color="dark grey",size=2) +
+  scale_color_manual(name="Subsistence",values=c("red","dark green"),labels=c("Farmers","Pastoralists")) +
+  xlab("Latitude") +
+  ylab("PC2") +
+  scale_size_continuous(name="Sample size",limits = c(10,90)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+plot_pc2_lat_subs
+```
+
+```{r}
+
+pdf("src/rmd-reports/pca-report-Fulani_HD_DB_files/supple-figure3c.pdf",width=10,height=4)
+( plot_pc2_lon_subs + plot_pc2_lat_subs ) + plot_layout(guides = 'collect') & theme(legend.position = "right")
+dev.off()
+```
